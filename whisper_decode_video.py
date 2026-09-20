@@ -15,13 +15,13 @@ from pytorch_lightning import Trainer, seed_everything
 from tqdm import tqdm
 from spec_augment import spec_augment
 from utils import (
+    add_noise,
     load_data,
     WhisperDataCollatorWhithPadding,
     WhisperVideoCollatorWithPadding,
 )
 from utils_batch_samplers import LengthBatchSampler
 from whisper_ft_muavic_video import MuavicVideoDataset
-from whisper_ft_muavic import MuavicSpeechDataset
 from fairseq.scoring.wer import WerScorer, WerScorerConfig
 import sacrebleu
 
@@ -51,6 +51,45 @@ args = parser.parse_args()
 SAMPLE_RATE = 16000
 SEED = 3407
 seed_everything(SEED, workers=True)
+
+
+class MuavicSpeechDecodeDataset(torch.utils.data.Dataset):
+    """Audio-only decode dataset without importing the training entrypoint."""
+
+    def __init__(self, audio_info_list, tokenizer, sample_rate, model_name, max_length,
+                 spec_augment, noise_prob=0, noise_fn=None):
+        self.audio_info_list = audio_info_list
+        self.tokenizer = tokenizer
+        self.sample_rate = sample_rate
+        self.model_name = model_name
+        self.max_length = max_length
+        self.spec_augment = spec_augment
+        self.noise_prob = noise_prob
+        self.noise_fn = [line.strip() for line in open(noise_fn).readlines()] if noise_fn else []
+
+    def __len__(self):
+        return len(self.audio_info_list)
+
+    def __getitem__(self, index):
+        lang, audio_path, text, _ = self.audio_info_list[index]
+        sample_rate, wav_data = wavfile.read(audio_path)
+        if sample_rate != self.sample_rate:
+            raise ValueError(f"Expected {self.sample_rate} Hz, got {sample_rate}: {audio_path}")
+        if np.random.rand() <= self.noise_prob:
+            wav_data = add_noise(wav_data, self.noise_fn, noise_snr=args.noise_snr)
+        audio = wav_data.flatten().astype(np.float32) / 32768.0
+        if self.max_length is not None:
+            audio = whisper.pad_or_trim(audio, length=self.max_length)
+        n_mels = 80 if self.model_name != "large-v3" else 128
+        mel = whisper.log_mel_spectrogram(audio, n_mels=n_mels)
+        dec_input_ids = [
+            self.tokenizer.sot,
+            self.tokenizer.special_tokens[f"<|{lang}|>"],
+            self.tokenizer.transcribe,
+            self.tokenizer.no_timestamps,
+        ] + self.tokenizer.encode(" " + text)
+        labels = dec_input_ids[1:] + [self.tokenizer.eot]
+        return {"input_ids": mel, "labels": labels, "dec_input_ids": dec_input_ids}
 
 # process lang and task
 visible = True if 'visible' in args.lang else False
@@ -88,7 +127,7 @@ dataset_kwargs = dict(
     noise_fn=args.noise_fn,
 )
 if args.modalities == "asr":
-    dataset = MuavicSpeechDataset(**dataset_kwargs)
+    dataset = MuavicSpeechDecodeDataset(**dataset_kwargs)
     collate_fn = WhisperDataCollatorWhithPadding()
 else:
     dataset = MuavicVideoDataset(**dataset_kwargs, train=False, noise_snr=args.noise_snr)
