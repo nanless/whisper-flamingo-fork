@@ -36,6 +36,7 @@ parser.add_argument('--fp16', default=1, type=int, help='if 1 use fp16, if 0 use
 parser.add_argument('--checkpoint-path', default=None, help='path to load the checkpoint from')
 parser.add_argument('--decode-path', default="decode/", help='path to save the decode results')
 parser.add_argument('--whisper-path', default="models/", help='path to download OpenAI whisper weights')
+parser.add_argument('--data-root', default='', help='root containing muavic/<language> manifests and media paths')
 parser.add_argument('--av-hubert-path', default="av_hubert/avhubert/", help='path to avhubert code')
 parser.add_argument('--av-hubert-ckpt', default="models/large_noise_pt_noise_ft_433h_only_weights.pt", 
                                         help='path to avhubert ckpt (needed to load the model architecture)')
@@ -58,13 +59,11 @@ if args.lang == 'lrs2':
     args.lang = 'en'
 
 # audio_transcript_pair_list = load_data(480000, 350, [args.lang], muavic_root='/data/sls/scratch/roudi/datasets/muavic/', 
-audio_transcript_pair_list = load_data(480000, 350, [args.lang], muavic_root='', 
-                                       include_audio_lens=True, task=args.task, lrs2=use_lrs2)
+audio_transcript_pair_list = load_data(480000, 350, [args.lang], muavic_root=args.data_root,
+                                       include_audio_lens=True, include_video_paths=True,
+                                       task=args.task, lrs2=use_lrs2, splits=('test',))
 
 test_dataset =  audio_transcript_pair_list['test']
-test_dataset = [[i[0], i[1].replace('/data/sls/scratch/roudi/datasets/muavic/', ''),
-                                    i[2], i[3]] for i in test_dataset] # fix paths
-# test_dataset = [[i[0], i[1], i[2], i[3]] for i in test_dataset] # use original paths
 multilingual = True if 'large' in args.model_type or 'en' not in args.model_type else False
 print("Multilingual tokenizer : {}".format(multilingual))
 
@@ -110,6 +109,7 @@ whisper_model = whisper.load_model(args.model_type,
                                    av_fusion=args.av_fusion,
                                    add_gated_x_attn=1 if args.av_fusion == 'separate' else 0)
 
+noise_name = os.path.basename(os.path.dirname(args.noise_fn)) if args.noise_fn else 'none'
 if args.checkpoint_path is not None:
     print("Loading checkpoint")
     state_dict = torch.load(args.checkpoint_path, map_location=torch.device('cpu'))
@@ -127,13 +127,14 @@ options = whisper.DecodingOptions(task=task, language=args.lang, fp16=args.fp16,
                                   beam_size=None if args.beam_size == 1 else args.beam_size,)
 
 if args.checkpoint_path is not None:
+    checkpoint_name = os.path.splitext(os.path.basename(args.checkpoint_path))[0]
     out_path = '{}/{}/{}/test/{}/snr-{}/visible-{}/beam-{}/{}' \
-                .format(args.decode_path,args.checkpoint_path, args.lang, args.modalities, args.noise_snr, int(visible), 
-                        args.beam_size, args.noise_fn.split('/')[-2])
+                .format(args.decode_path, checkpoint_name, args.lang, args.modalities, args.noise_snr, int(visible),
+                        args.beam_size, noise_name)
 else:
     out_path = '{}/{}/{}/test/{}/snr-{}/visible-{}/beam-{}/{}' \
                 .format(args.decode_path,args.model_type,args.lang, args.modalities, args.noise_snr, int(visible),
-                        args.beam_size, args.noise_fn.split('/')[-2])
+                        args.beam_size, noise_name)
 os.makedirs(out_path, exist_ok=True)
 
 # Convert new paramters to fp16

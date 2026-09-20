@@ -212,9 +212,31 @@ def add_noise(clean_wav, noise_wavs, noise_snr=0):
 
 def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 'es', 'fr', 'it', 'pt', 'ru'],
               muavic_root='/data/sls/scratch/roudi/datasets/muavic/', reduce_val=None, include_audio_lens=False,
-              AUDIO_MAX_LENGTH_VAL=480000, vc2=False, vc2_path='', lrs2=False, visible=False, task='transcribe'):
+              AUDIO_MAX_LENGTH_VAL=480000, vc2=False, vc2_path='', lrs2=False, visible=False,
+              task='transcribe', include_video_paths=False, splits=None):
     # reduce_val: If not None, keep this number of samples from the validation set
-    audio_transcript_pair_list = {'train':[], 'valid':[], 'test':[]}
+    selected_splits = tuple(splits or ('train', 'valid', 'test'))
+    unknown_splits = set(selected_splits) - {'train', 'valid', 'test'}
+    if unknown_splits:
+        raise ValueError(f"Unknown splits: {sorted(unknown_splits)}")
+    audio_transcript_pair_list = {split: [] for split in selected_splits}
+
+    def resolve_media_path(value):
+        if os.path.isfile(value):
+            return value
+        candidates = [os.path.join(muavic_root, value.lstrip('/'))]
+        marker = '/muavic/'
+        if marker in value:
+            suffix = value.split(marker, 1)[1]
+            candidates.extend([
+                os.path.join(muavic_root, suffix),
+                os.path.join(muavic_root, 'muavic', suffix),
+            ])
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return candidate
+        return candidates[0]
+
     for lang in langs:
         for split in audio_transcript_pair_list:
             if lrs2:
@@ -246,9 +268,26 @@ def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 
                 with open(txt_fn) as txt:
                     audio_lns = tsv.readlines()[1:]
                     txt_lns = txt.readlines()
+                    if len(audio_lns) != len(txt_lns):
+                        raise ValueError(
+                            f"Manifest/label row mismatch: {tsv_fn}={len(audio_lns)}, "
+                            f"{txt_fn}={len(txt_lns)}"
+                        )
                     # audio path, audio length, text, text length, video_length
-                    wav_fns = [(audio.strip().split('\t')[2],  int(audio.strip().split('\t')[-1]), txt.strip(), 
-                                len(txt.strip()), int(audio.strip().split('\t')[-2])) for audio, txt in zip(audio_lns, txt_lns)]
+                    wav_fns = []
+                    for audio, txt in zip(audio_lns, txt_lns):
+                        fields = audio.rstrip('\n').split('\t')
+                        if len(fields) < 5:
+                            raise ValueError(f"Expected at least 5 TSV columns in {tsv_fn}: {fields}")
+                        text = txt.strip()
+                        wav_fns.append((
+                            resolve_media_path(fields[2]),
+                            int(fields[-1]),
+                            text,
+                            len(text),
+                            int(fields[-2]),
+                            resolve_media_path(fields[1]),
+                        ))
                     pre_video_check = len(wav_fns)
                     wav_fns =  list(filter(lambda x: x[4] > 0, wav_fns))
                     post_video_check = len(wav_fns)
@@ -265,18 +304,19 @@ def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 
                         wav_fns =  list(filter(lambda x: x[1] <= AUDIO_MAX_LENGTH_VAL, wav_fns))
                     print("Total hours {} : {}".format(split, sum([int(x[1]) for x in wav_fns]) / 16000 / 3600))
                     if not include_audio_lens:
-                        lang_filtered = [(lang, i[0], i[2]) for i in wav_fns]
-                    else: 
-                        lang_filtered = [(lang, i[0], i[2], i[1]) for i in wav_fns]
+                        lang_filtered = [(lang, i[0], i[2], i[5]) if include_video_paths
+                                         else (lang, i[0], i[2]) for i in wav_fns]
+                    else:
+                        lang_filtered = [(lang, i[0], i[2], i[1], i[5]) if include_video_paths
+                                         else (lang, i[0], i[2], i[1]) for i in wav_fns]
                     if split == 'valid' or split == 'test' and reduce_val is not None:
                         lang_filtered = lang_filtered[:reduce_val]
                     len_after = len(lang_filtered)
                     audio_transcript_pair_list[split] += lang_filtered
             print(lang, split, len_before, len_after)
     print("Total data lengths")
-    print(len(audio_transcript_pair_list['train']))
-    print(len(audio_transcript_pair_list['valid']))
-    print(len(audio_transcript_pair_list['test']))
+    for split in selected_splits:
+        print(split, len(audio_transcript_pair_list[split]))
     return audio_transcript_pair_list
 
 class WhisperDataCollatorWhithPadding:

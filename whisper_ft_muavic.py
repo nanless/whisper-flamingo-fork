@@ -96,7 +96,7 @@ class WhisperModelModule(LightningModule):
         print("Loading Whisper model and weights")
         self.model = whisper.load_model(model_name, 
                                         device='cpu', # avoid OOM on gpu 0 for distributed
-                                        download_root='/data/sls/scratch/roudi/experiments/whisper/',
+                                        download_root=cfg.whisper_download_root,
                                         dropout_rate=cfg.dropout_rate)
         multilingual = True if 'large' in model_name or 'en' not in model_name else False
         print("Multilingual tokenizer : {}".format(multilingual))
@@ -324,21 +324,24 @@ tflogger, checkpoint_callback, callback_list = setup_logging_and_checkpoint(cfg.
 if cfg.lang == 'multi-all':
     audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, 
                                            ['en', 'ar', 'de', 'el', 'es', 'fr', 'it', 'pt', 'ru'],
-                                            reduce_val=300, include_audio_lens=True)
+                                            muavic_root=cfg.data_root, reduce_val=300, include_audio_lens=True)
 elif cfg.lang == 'multi':
     audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, 
                                             ['en', 'es', 'fr', 'it', 'pt'],
-                                            reduce_val=300, include_audio_lens=True, vc2=cfg.vc2, vc2_path=cfg.vc2_path)
+                                            muavic_root=cfg.data_root, reduce_val=300,
+                                            include_audio_lens=True, vc2=cfg.vc2, vc2_path=cfg.vc2_path)
 elif cfg.lang == 'multi_en-st':
     audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, 
                                            ['en', 'el', 'es', 'fr', 'it', 'pt', 'ru'],
-                                           reduce_val=200, include_audio_lens=True, task='En-X')
+                                           muavic_root=cfg.data_root, reduce_val=200,
+                                           include_audio_lens=True, task='En-X')
 elif 'lrs2' in cfg.lang:
     audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, ['en'], 
-                                        include_audio_lens=True, lrs2=True)
+                                        muavic_root=cfg.data_root, include_audio_lens=True, lrs2=True)
 else:
     audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, [cfg.lang], 
-                                           include_audio_lens=True, vc2=cfg.vc2, vc2_path=cfg.vc2_path)
+                                           muavic_root=cfg.data_root, include_audio_lens=True,
+                                           vc2=cfg.vc2, vc2_path=cfg.vc2_path)
 model = WhisperModelModule(cfg, cfg.model_name, cfg.lang, audio_transcript_pair_list['train'], 
                                                           audio_transcript_pair_list['valid'],
                                                           audio_transcript_pair_list['test'])
@@ -368,5 +371,4 @@ else:
                                                 model.test_dataloader_noisy(), model.test_dataloader_clean()]) # validate before training
     trainer.fit(model, val_dataloaders=[model.val_dataloader_noisy(), model.val_dataloader_clean(),
                                                 model.test_dataloader_noisy(), model.test_dataloader_clean()])
-
 

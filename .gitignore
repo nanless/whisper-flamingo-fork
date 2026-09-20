@@ -11,3 +11,8 @@ av_hubert/
 whisper/__pycache__/
 __pycache__/
 decode/
+*.py[cod]
+*.part
+downloads/
+logs/
+*.ckpt

@@ -56,7 +56,9 @@ class MuavicVideoDataset(torch.utils.data.Dataset):
         return len(self.audio_info_list)
 
     def __getitem__(self, id):
-        lang, audio_path, text, _ = self.audio_info_list[id]
+        item = self.audio_info_list[id]
+        lang, audio_path, text, _ = item[:4]
+        video_path = item[4] if len(item) >= 5 else audio_path.replace('audio', 'video').replace('.wav', '.mp4')
         # audio = load_wave(audio_path, sample_rate=self.sample_rate)
         if np.random.rand() > self.noise_prob: # disable noise
             sample_rate, wav_data = wavfile.read(audio_path)
@@ -90,7 +92,6 @@ class MuavicVideoDataset(torch.utils.data.Dataset):
                         self.tokenizer.encode(" " + text)
         labels = dec_input_ids[1:] + [self.tokenizer.eot]
 
-        video_path = audio_path.replace('audio', 'video').replace('.wav', '.mp4')
         video = load_video_feats(video_path, train=self.train)
         video = video.astype(np.float32)
 
@@ -113,7 +114,7 @@ class WhisperVideoModule(LightningModule):
         print("Loading Whisper model and weights")
         self.model = whisper.load_model(model_name,
                                         device='cpu', # avoid OOM on gpu 0 for distributed
-                                        download_root='/data/sls/scratch/roudi/experiments/whisper/',
+                                        download_root=cfg.whisper_download_root,
                                         dropout_rate=cfg.dropout_rate,
                                         video=True,
                                         video_model_path=cfg.video_model_ckpt, 
@@ -394,21 +395,27 @@ if __name__ == "__main__":
     if cfg.lang == 'multi-all':
         audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, 
                                             ['en', 'ar', 'de', 'el', 'es', 'fr', 'it', 'pt', 'ru'],
-                                            reduce_val=300, include_audio_lens=True)
+                                            muavic_root=cfg.data_root, reduce_val=300,
+                                            include_audio_lens=True, include_video_paths=True)
     elif cfg.lang == 'multi':
         audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, 
                                             ['en', 'es', 'fr', 'it', 'pt'],
-                                            reduce_val=300, include_audio_lens=True)
+                                            muavic_root=cfg.data_root, reduce_val=300,
+                                            include_audio_lens=True, include_video_paths=True)
     elif cfg.lang == 'multi_en-st':
         audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, 
                                            ['en', 'el', 'es', 'fr', 'it', 'pt', 'ru'],
-                                           reduce_val=200, include_audio_lens=True, task='En-X')
+                                           muavic_root=cfg.data_root, reduce_val=200,
+                                           include_audio_lens=True, include_video_paths=True, task='En-X')
     elif 'lrs2' in cfg.lang:
         audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, ['en'], 
-                                            include_audio_lens=True, lrs2=True)
+                                            muavic_root=cfg.data_root, include_audio_lens=True,
+                                            include_video_paths=True, lrs2=True)
     else:
         audio_transcript_pair_list = load_data(cfg.audio_max_length, cfg.text_max_length, 
-                                               [cfg.lang], include_audio_lens=True, vc2=cfg.vc2, vc2_path=cfg.vc2_path)
+                                               [cfg.lang], muavic_root=cfg.data_root,
+                                               include_audio_lens=True, include_video_paths=True,
+                                               vc2=cfg.vc2, vc2_path=cfg.vc2_path)
 
     model = WhisperVideoModule(cfg, cfg.model_name, cfg.lang, 
                                audio_transcript_pair_list['train'], 
@@ -446,4 +453,3 @@ if __name__ == "__main__":
                                                    model.val_dataloader_noisy(), model.val_dataloader_clean()]) # validate before training
         trainer.fit(model, val_dataloaders=[model.test_dataloader_noisy(), model.test_dataloader_clean(),
                                                    model.val_dataloader_noisy(), model.val_dataloader_clean()])
-
