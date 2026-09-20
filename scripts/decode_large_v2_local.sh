@@ -9,9 +9,12 @@ BEAM_SIZE=${BEAM_SIZE:-15}
 SNR=${SNR:-1000}
 NOISE_FN=${NOISE_FN:-${ROOT}/noise/babble/lrs3/test.tsv}
 WHISPER_PATH=${WHISPER_PATH:-/root/.cache/whisper}
+PYTHON_BIN=${PYTHON_BIN:-/root/miniforge3/envs/whisper-flamingo-repro/bin/python}
 AVHUBERT_PATH=${AVHUBERT_PATH:-${ROOT}/av_hubert/avhubert}
 AVHUBERT_CKPT=${AVHUBERT_CKPT:-${ROOT}/models/large_noise_pt_noise_ft_433h_only_weights.pt}
 DECODE_PATH=${DECODE_PATH:-${ROOT}/decode}
+
+[[ -x ${PYTHON_BIN} ]] || { echo "Python executable not found: ${PYTHON_BIN}" >&2; exit 1; }
 
 if [[ ${MODE} == avsr ]]; then
   CHECKPOINT=${CHECKPOINT:-${ROOT}/models/whisper-flamingo_en_large_vc2_clean.pt}
@@ -34,7 +37,7 @@ if [[ ${MODE} == avsr ]]; then
 fi
 
 cd "${ROOT}"
-CUDA_VISIBLE_DEVICES=${GPU_ID} python -u whisper_decode_video.py \
+CUDA_VISIBLE_DEVICES=${GPU_ID} "${PYTHON_BIN}" -u whisper_decode_video.py \
   --lang en \
   --model-type large-v2 \
   --data-root "${DATA_ROOT}" \

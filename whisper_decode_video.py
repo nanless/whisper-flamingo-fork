@@ -16,10 +16,12 @@ from tqdm import tqdm
 from spec_augment import spec_augment
 from utils import (
     load_data,
+    WhisperDataCollatorWhithPadding,
     WhisperVideoCollatorWithPadding,
 )
 from utils_batch_samplers import LengthBatchSampler
 from whisper_ft_muavic_video import MuavicVideoDataset
+from whisper_ft_muavic import MuavicSpeechDataset
 from fairseq.scoring.wer import WerScorer, WerScorerConfig
 import sacrebleu
 
@@ -60,7 +62,8 @@ if args.lang == 'lrs2':
 
 # audio_transcript_pair_list = load_data(480000, 350, [args.lang], muavic_root='/data/sls/scratch/roudi/datasets/muavic/', 
 audio_transcript_pair_list = load_data(480000, 350, [args.lang], muavic_root=args.data_root,
-                                       include_audio_lens=True, include_video_paths=True,
+                                       include_audio_lens=True,
+                                       include_video_paths=args.modalities != "asr",
                                        task=args.task, lrs2=use_lrs2, splits=('test',))
 
 test_dataset =  audio_transcript_pair_list['test']
@@ -74,16 +77,22 @@ special_token_set = set(tokenizer.special_tokens.values())
 
 args.checkpoint_path= None if args.use_original_whisper else args.checkpoint_path
 # If the original Whisper from OpenAI is used, crop / pad the audio to 30s
-dataset = MuavicVideoDataset(test_dataset, 
-                                tokenizer, 
-                                SAMPLE_RATE, 
-                                args.model_type,
-                                max_length=None if args.checkpoint_path else SAMPLE_RATE * 30,
-                                spec_augment="", # no spec augment
-                                noise_prob=1 if args.noise_snr != 1000 else 0,
-                                noise_fn = args.noise_fn,
-                                train=False, # video center crop, no flip
-                                noise_snr=args.noise_snr,)   
+dataset_kwargs = dict(
+    audio_info_list=test_dataset,
+    tokenizer=tokenizer,
+    sample_rate=SAMPLE_RATE,
+    model_name=args.model_type,
+    max_length=None if args.checkpoint_path else SAMPLE_RATE * 30,
+    spec_augment="",
+    noise_prob=1 if args.noise_snr != 1000 else 0,
+    noise_fn=args.noise_fn,
+)
+if args.modalities == "asr":
+    dataset = MuavicSpeechDataset(**dataset_kwargs)
+    collate_fn = WhisperDataCollatorWhithPadding()
+else:
+    dataset = MuavicVideoDataset(**dataset_kwargs, train=False, noise_snr=args.noise_snr)
+    collate_fn = WhisperVideoCollatorWithPadding()
 
 # For beam size of 1, use batch decoding with ~40s of audio per batch
 # For beam size >1, each audio sample is decoded separately
@@ -96,7 +105,7 @@ length_sorter = LengthBatchSampler(batch_bins=SAMPLE_RATE * 40 if args.checkpoin
 
 dataloader = torch.utils.data.DataLoader(dataset,
                     num_workers=8,
-                    collate_fn=WhisperVideoCollatorWithPadding(),
+                    collate_fn=collate_fn,
                     batch_sampler=length_sorter)
 
 print("Loading Whisper")
@@ -156,21 +165,21 @@ with open(os.path.join(out_path, 'pred.txt'), 'w+') as f:
     for i, b in enumerate(tqdm(dataloader)):
         if args.fp16:
             input_ids = b["input_ids"].half().cuda()
-            video = b["video"].half().cuda()
+            video = b["video"].half().cuda() if args.modalities != "asr" else None
         else:
             if torch.cuda.is_available():
               input_ids = b["input_ids"].cuda()
-              video = b["video"].cuda()
+              video = b["video"].cuda() if args.modalities != "asr" else None
             else:
               input_ids = b["input_ids"]
-              video = b["video"]
+              video = b["video"] if args.modalities != "asr" else None
         labels = b["labels"]
         with torch.no_grad():
             # NOTE: haven't implemented padding mask for AV-HuBERT, but it seems to work fine without it
             if args.modalities == "avsr":
                 results = whisper_model.decode(input_ids, options, video)
             elif args.modalities == "asr": 
-                results = whisper_model.decode(input_ids, options, video, test_a=True)
+                results = whisper_model.decode(input_ids, options)
             elif args.modalities == "vsr": 
                 results = whisper_model.decode(input_ids, options, video, test_v=True)
             else:

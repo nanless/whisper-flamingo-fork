@@ -221,10 +221,16 @@ def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 
         raise ValueError(f"Unknown splits: {sorted(unknown_splits)}")
     audio_transcript_pair_list = {split: [] for split in selected_splits}
 
-    def resolve_media_path(value):
+    def resolve_media_path(value, manifest_root=None):
         if os.path.isfile(value):
             return value
-        candidates = [os.path.join(muavic_root, value.lstrip('/'))]
+        candidates = []
+        if manifest_root:
+            if os.path.isabs(manifest_root):
+                candidates.append(os.path.join(manifest_root, value.lstrip('/')))
+            else:
+                candidates.append(os.path.join(muavic_root, manifest_root, value))
+        candidates.append(os.path.join(muavic_root, value.lstrip('/')))
         marker = '/muavic/'
         if marker in value:
             suffix = value.split(marker, 1)[1]
@@ -232,10 +238,13 @@ def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 
                 os.path.join(muavic_root, suffix),
                 os.path.join(muavic_root, 'muavic', suffix),
             ])
+        candidates = list(dict.fromkeys(os.path.normpath(candidate) for candidate in candidates))
         for candidate in candidates:
             if os.path.isfile(candidate):
                 return candidate
-        return candidates[0]
+        raise FileNotFoundError(
+            f"Media path does not exist: value={value!r}, candidates={candidates}"
+        )
 
     for lang in langs:
         for split in audio_transcript_pair_list:
@@ -266,7 +275,11 @@ def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 
                 
             with open(tsv_fn) as tsv:
                 with open(txt_fn) as txt:
-                    audio_lns = tsv.readlines()[1:]
+                    tsv_lines = tsv.readlines()
+                    if not tsv_lines:
+                        raise ValueError(f"Empty manifest: {tsv_fn}")
+                    manifest_root = tsv_lines[0].strip() or '/'
+                    audio_lns = tsv_lines[1:]
                     txt_lns = txt.readlines()
                     if len(audio_lns) != len(txt_lns):
                         raise ValueError(
@@ -281,12 +294,12 @@ def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 
                             raise ValueError(f"Expected at least 5 TSV columns in {tsv_fn}: {fields}")
                         text = txt.strip()
                         wav_fns.append((
-                            resolve_media_path(fields[2]),
+                            resolve_media_path(fields[2], manifest_root),
                             int(fields[-1]),
                             text,
                             len(text),
                             int(fields[-2]),
-                            resolve_media_path(fields[1]),
+                            resolve_media_path(fields[1], manifest_root),
                         ))
                     pre_video_check = len(wav_fns)
                     wav_fns =  list(filter(lambda x: x[4] > 0, wav_fns))

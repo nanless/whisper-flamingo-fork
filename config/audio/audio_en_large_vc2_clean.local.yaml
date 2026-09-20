@@ -17,7 +17,7 @@ gradient_accumulation_steps: 1
 
 monitor: val/acc
 noise_prob: 0.0
-noise_fn: noise/musan/tsv/all/train.tsv
+noise_fn: null
 noise_fn_val: noise/babble/lrs3/valid.tsv
 noise_fn_test: noise/babble/lrs3/test.tsv
 
@@ -29,7 +29,7 @@ vc2_path: en_vc2
 resume_training: false
 
 data_root: /root/group-shared/voiceprint/data/multimodal/multimodal/audio-visual/derived/avsr_reproduction/muavic_wf_v1
-whisper_download_root: /root/code/github_repos/whisper-flamingo/models/openai
+whisper_download_root: /root/.cache/whisper
 train_id: whisper_en_large_vc2_clean
 log_output_dir: slurm/train_audio_slurm
 check_output_dir: models/checkpoint

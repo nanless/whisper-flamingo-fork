@@ -29,7 +29,7 @@ vc2_path: en_vc2
 resume_training: false
 
 data_root: /root/group-shared/voiceprint/data/multimodal/multimodal/audio-visual/derived/avsr_reproduction/muavic_wf_v1
-whisper_download_root: /root/code/github_repos/whisper-flamingo/models/openai
+whisper_download_root: /root/.cache/whisper
 train_id: whisper_en_large_vc2_noisy
 log_output_dir: slurm/train_audio_slurm
 check_output_dir: models/checkpoint

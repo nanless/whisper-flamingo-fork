@@ -129,13 +129,28 @@ class WhisperVideoModule(LightningModule):
             state_dict_updated = {k[6:]: v  for k, v in state_dict.items()} # remove 'model.'
             print(state_dict_updated.keys())
             try:
-                self.model.load_state_dict(state_dict_updated) 
-            except BaseException as e: 
+                self.model.load_state_dict(state_dict_updated)
+            except RuntimeError as e:
                 print(str(e))
                 print("Loading weights with strict=False")
-                self.model.load_state_dict(state_dict_updated, strict=False) 
+                incompatible = self.model.load_state_dict(state_dict_updated, strict=False)
+                print("Missing keys:", incompatible.missing_keys)
+                print("Unexpected keys:", incompatible.unexpected_keys)
         self.freeze_video_model = cfg.freeze_video_model
         self.freeze_video_batch_norm_stats = cfg. freeze_video_batch_norm_stats
+        if cfg.add_gated_x_attn != 0:
+            trainable_keys = ["video_projection", "gated_x_attn", "attn_gate", "ff"]
+            if not cfg.freeze_video_model:
+                trainable_keys.append("video_model")
+            for name, parameter in self.model.named_parameters():
+                parameter.requires_grad = any(key in name for key in trainable_keys)
+        elif cfg.freeze_video_model:
+            for parameter in self.model.encoder.video_model.parameters():
+                parameter.requires_grad = False
+        trainable = [(name, parameter.numel()) for name, parameter in self.model.named_parameters()
+                     if parameter.requires_grad]
+        print("Trainable parameter tensors:", [name for name, _ in trainable])
+        print("Trainable parameter count:", sum(count for _, count in trainable))
         multilingual = True if 'large' in model_name or 'en' not in model_name else False
         print("Multilingual tokenizer : {}".format(multilingual))
         self.tokenizer = whisper.tokenizer.get_tokenizer(multilingual=multilingual, task='transcribe')
@@ -163,17 +178,8 @@ class WhisperVideoModule(LightningModule):
         dec_input_ids = batch["dec_input_ids"].long()
         padding_mask = batch["padding_mask"]
 
-        if self.freeze_video_model: # freeze video encoder
-            for param in self.model.encoder.video_model.parameters():
-                param.requires_grad = False
         if self.freeze_video_batch_norm_stats: # use batch stats from ckpt (do not estimate on batch)
             self.model.encoder.video_model.eval()
-
-        if self.cfg.add_gated_x_attn != 0: # freeze whisper encoder gradients for x-attn
-            video_projection_layers = ["video_projection"] if self.cfg.freeze_video_model else ["video"]
-            for n, p in self.model.encoder.named_parameters():
-                if not any(nd in n for nd in video_projection_layers):
-                    p.requires_grad = False
         # if 'large' in self.model_name: # only decoder training, NOTE: be careful with linear layer here
         #     with torch.no_grad():
         #         features, x_v = self.model.encoder(input_ids, video, training=True, padding_mask=padding_mask)

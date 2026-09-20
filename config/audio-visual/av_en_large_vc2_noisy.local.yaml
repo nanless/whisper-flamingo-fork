@@ -44,6 +44,6 @@ add_gated_x_attn: 1
 av_fusion: separate
 
 data_root: /root/group-shared/voiceprint/data/multimodal/multimodal/audio-visual/derived/avsr_reproduction/muavic_wf_v1
-whisper_download_root: /root/code/github_repos/whisper-flamingo/models/openai
+whisper_download_root: /root/.cache/whisper
 log_output_dir: slurm/train_video_slurm
 check_output_dir: models/checkpoint
