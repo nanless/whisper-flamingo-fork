@@ -511,6 +511,32 @@ def whisper_flamingo_projection_optimizer(model, cfg, t_total):
     )
     return optimizer, scheduler
 
+class SafeModelCheckpoint(ModelCheckpoint):
+    """ModelCheckpoint that skips a validation end whose monitor is absent.
+
+    ``on_validation_end`` fires after *every* validation dataloader, but this
+    trainer runs four of them and each logs a different prefix
+    (``val/*``, ``val_noisy_multi_babble/*``, ``test/*``,
+    ``test_noisy_multi_babble/*``).  A checkpoint monitoring ``val/acc`` or
+    ``test/acc`` therefore sees no such key on the other dataloaders, and
+    Lightning's stock callback raises ``MisconfigurationException``.
+
+    A fresh run survives by luck: the seeding ``trainer.validate(...)`` runs all
+    four dataloaders first, so both keys happen to sit in
+    ``trainer.callback_metrics`` before ``fit`` starts.  A resumed run
+    (``fit(ckpt_path='last')``) restores ``callback_metrics`` and has no seeding
+    pass, so it aborted right after ``Restored all states``.
+
+    Skipping is the correct behaviour: the checkpoint is written when its own
+    metric actually appears, which is once per validation cycle.
+    """
+
+    def on_validation_end(self, trainer, pl_module) -> None:
+        if self.monitor is not None and self.monitor not in trainer.callback_metrics:
+            return
+        super().on_validation_end(trainer, pl_module)
+
+
 def setup_logging_and_checkpoint(log_output_dir, check_output_dir, train_name, train_id, monitor='val/acc'):
     Path(log_output_dir).mkdir(exist_ok=True)
     Path(check_output_dir).mkdir(exist_ok=True)
@@ -521,7 +547,7 @@ def setup_logging_and_checkpoint(log_output_dir, check_output_dir, train_name, t
         version=train_id
     )
 
-    checkpoint_callback = ModelCheckpoint(
+    checkpoint_callback = SafeModelCheckpoint(
         dirpath=f"{check_output_dir}/{train_id}",
         filename="step-{step:05d}-wer={val/wer:.4f}-acc={val/acc:.4f}",
         monitor=monitor,
@@ -532,7 +558,7 @@ def setup_logging_and_checkpoint(log_output_dir, check_output_dir, train_name, t
     )
 
     monitor = monitor.replace('test', 'val') if 'test' in monitor else monitor.replace('val', 'test')
-    val_checkpoint = ModelCheckpoint(
+    val_checkpoint = SafeModelCheckpoint(
         dirpath=f"{check_output_dir}/{train_id}",
         filename="step-{step:05d}-wer={val/wer:.4f}-acc={val/acc:.4f}",
         monitor=monitor,
@@ -541,7 +567,7 @@ def setup_logging_and_checkpoint(log_output_dir, check_output_dir, train_name, t
         auto_insert_metric_name=False,
     )
 
-    latest_checkpoint = ModelCheckpoint(
+    latest_checkpoint = SafeModelCheckpoint(
         dirpath=f"{check_output_dir}/{train_id}",
         filename="step-{step:05d}-wer={val/wer:.4f}-acc={val/acc:.4f}",
         monitor="step",
