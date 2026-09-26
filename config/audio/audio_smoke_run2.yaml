@@ -1,0 +1,35 @@
+train_name: whisper
+audio_max_length: 160000
+text_max_length: 350
+accelerator: auto
+weight_decay: 0.01
+adam_epsilon: 1.0e-8
+num_worker: 2
+validate_every_n_batches: 1
+num_devices: 1
+
+model_name: large-v2
+learning_rate: 5.0e-6
+batch_size: 2
+num_train_steps: 4
+warmup_steps: 1
+gradient_accumulation_steps: 1
+
+monitor: val/acc
+noise_prob: 0.0
+noise_fn: null
+noise_fn_val: noise/babble/lrs3/valid.tsv
+noise_fn_test: noise/babble/lrs3/test.tsv
+
+spec_augment: ls-basic
+dropout_rate: 0
+lang: en
+vc2: true
+vc2_path: en_vc2
+resume_training: true
+
+data_root: /root/group-shared/voiceprint/data/multimodal/multimodal/audio-visual/derived/avsr_reproduction/wf_smoke_v1
+whisper_download_root: /root/.cache/whisper
+train_id: whisper_smoke
+log_output_dir: slurm/smoke
+check_output_dir: models/checkpoint_smoke
