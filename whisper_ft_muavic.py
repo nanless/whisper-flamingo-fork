@@ -313,6 +313,12 @@ with open(cfg_yaml, 'r') as file:
     dct = yaml.safe_load(file)
     cfg = types.SimpleNamespace(**dct)
 
+# Resume without editing the config: a multi-day run that gets interrupted
+# should be restartable from the command line.  The trainer picks up
+# <check_output_dir>/<train_id>/last.ckpt when this is truthy.
+if os.environ.get("RESUME_TRAINING", "").lower() in ("1", "true", "yes"):
+    cfg.resume_training = True
+
 print(cfg)
 print("audio max length: {}".format(cfg.audio_max_length))
 
