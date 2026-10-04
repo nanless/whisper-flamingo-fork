@@ -15,6 +15,7 @@ from pytorch_lightning import Trainer, seed_everything
 from tqdm import tqdm
 from spec_augment import spec_augment
 from utils import (
+    to_float_mono,
     load_data,
     load_wave,
     add_noise,
@@ -54,10 +55,10 @@ class MuavicSpeechDataset(torch.utils.data.Dataset):
         # audio = load_wave(audio_path, sample_rate=self.sample_rate)
         if np.random.rand() > self.noise_prob: # disable noise
             sample_rate, wav_data = wavfile.read(audio_path)
-            audio = wav_data.flatten().astype(np.float32) / 32768.0
+            audio = to_float_mono(wav_data).flatten()
         else: # add noise
             sample_rate, wav_data = wavfile.read(audio_path)
-            audio = add_noise(wav_data, self.noise_fn, noise_snr=0).flatten().astype(np.float32) / 32768.0
+            audio = add_noise(wav_data, self.noise_fn, noise_snr=0).flatten()
 
         audio_frames = len(audio.flatten()) // 160
         # pad audio to cfg.audio_max_length (longer samples filtered out already)

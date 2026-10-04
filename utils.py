@@ -172,15 +172,29 @@ class HorizontalFlip(object):
                 frames[index] = cv2.flip(frames[index], 1)
         return frames
 
+def to_float_mono(wav_data):
+    """Return float32 samples in [-1, 1] whatever the file's sample format.
+
+    scipy.io.wavfile.read returns int16 for PCM_16 but float32 ALREADY in
+    [-1, 1] for IEEE-float files.  The callers used to divide unconditionally by
+    32768, which turns every float32 clip (all of VoxCeleb2) into near-silence
+    -- and add_noise's int16 cast then flattened it to exact zeros.
+    """
+    a = np.asarray(wav_data)
+    if np.issubdtype(a.dtype, np.integer):
+        return a.astype(np.float32) / float(-np.iinfo(a.dtype).min)
+    return a.astype(np.float32)
+
+
 def select_noise(noise_wavs):
     rand_indexes = np.random.randint(0, len(noise_wavs), size=1)
     noise_wav = []
     for x in rand_indexes:
-        noise_wav.append(wavfile.read(noise_wavs[x])[1].astype(np.float32))
+        noise_wav.append(to_float_mono(wavfile.read(noise_wavs[x])[1]))
     return noise_wav[0]
 
 def add_noise(clean_wav, noise_wavs, noise_snr=0):
-    clean_wav = clean_wav.astype(np.float32)
+    clean_wav = to_float_mono(clean_wav)
     noise_wav = select_noise(noise_wavs)
     if type(noise_snr) == int or type(noise_snr) == float:
         snr = noise_snr
@@ -198,17 +212,13 @@ def add_noise(clean_wav, noise_wavs, noise_snr=0):
     adjusted_noise_wav = noise_wav * (adjusted_noise_rms / noise_rms)
     mixed = clean_wav + adjusted_noise_wav
 
-    #Avoid clipping noise
-    max_int16 = np.iinfo(np.int16).max
-    min_int16 = np.iinfo(np.int16).min
-    if mixed.max(axis=0) > max_int16 or mixed.min(axis=0) < min_int16:
-        if mixed.max(axis=0) >= abs(mixed.min(axis=0)): 
-            reduction_rate = max_int16 / mixed.max(axis=0)
-        else :
-            reduction_rate = min_int16 / mixed.min(axis=0)
-        mixed = mixed * (reduction_rate)
-    mixed = mixed.astype(np.int16)
-    return mixed
+    # Avoid clipping: the mix is in float [-1, 1], so the ceiling is 1.0, not
+    # the int16 range.  (The old code compared against 32767 and then cast to
+    # int16, which zeroed every sample of a float32 input.)
+    peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
+    if peak > 1.0:
+        mixed = mixed / peak
+    return mixed.astype(np.float32)
 
 def load_data(AUDIO_MAX_LENGTH, TEXT_MAX_LENGTH, langs=['en', 'ar', 'de', 'el', 'es', 'fr', 'it', 'pt', 'ru'],
               muavic_root='/data/sls/scratch/roudi/datasets/muavic/', reduce_val=None, include_audio_lens=False,
