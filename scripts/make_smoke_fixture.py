@@ -43,7 +43,15 @@ def resolve(value: str, data_root: Path):
     return None
 
 
-def slice_split(src_dir: Path, dest_dir: Path, split: str, n: int, data_root: Path) -> int:
+def slice_split(
+    src_dir: Path, dest_dir: Path, split: str, n: int, data_root: Path, balanced: bool = False
+) -> int:
+    """Write at most ``n`` resolvable rows of ``split``.
+
+    With ``balanced`` the row budget is split between rows resolved inside the
+    LRS3 tree and rows resolved elsewhere (VoxCeleb2), so a merged en_vc2 slice
+    exercises both media/loader paths instead of only the LRS3 head rows.
+    """
     tsv_p, txt_p = src_dir / (split + ".tsv"), src_dir / (split + ".en")
     if not tsv_p.is_file():
         return 0
@@ -51,18 +59,40 @@ def slice_split(src_dir: Path, dest_dir: Path, split: str, n: int, data_root: Pa
     txt = txt_p.read_text(encoding="utf-8").splitlines()
     if len(tsv) - 1 != len(txt):
         raise SystemExit("%s: tsv %d vs en %d" % (split, len(tsv) - 1, len(txt)))
+    lrs3_root = os.path.join(data_root, "muavic", "en") + os.sep
+    lrs3_quota = n - n // 2 if balanced else 0
+    other_quota = n // 2 if balanced else n
+    lrs3_kept = other_kept = 0
     kept, texts = [], []
     for row, text in zip(tsv[1:], txt):
         f = row.split("\t")
         if len(f) < 5:
             continue
-        if resolve(f[1], data_root) and resolve(f[2], data_root):
-            kept.append(row)
-            texts.append(text)
-        if len(kept) == n:
+        if balanced and lrs3_kept >= lrs3_quota and "/muavic/en/" in f[2]:
+            # An audio path under the LRS3 tree can never satisfy the
+            # non-LRS3 quota; skip its stat calls (the manifest is huge).
+            continue
+        video, audio = resolve(f[1], data_root), resolve(f[2], data_root)
+        if not (video and audio):
+            continue
+        if balanced and ("/muavic/en/" in f[2] or os.path.normpath(audio).startswith(lrs3_root)):
+            if lrs3_kept >= lrs3_quota:
+                continue
+            lrs3_kept += 1
+        else:
+            if other_kept >= other_quota:
+                continue
+            other_kept += 1
+        kept.append(row)
+        texts.append(text)
+        if lrs3_kept >= lrs3_quota and other_kept >= other_quota:
             break
     if not kept:
         raise SystemExit("%s: no row with resolvable media (data_root=%s)" % (split, data_root))
+    if balanced and not other_kept:
+        raise SystemExit(
+            "%s: no non-LRS3 row with resolvable media (data_root=%s)" % (split, data_root)
+        )
     (dest_dir / (split + ".tsv")).write_text("\n".join(["/"] + kept) + "\n", encoding="utf-8")
     (dest_dir / (split + ".en")).write_text("\n".join(texts) + "\n", encoding="utf-8")
     print("  %s: %d rows" % (split, len(kept)))
@@ -94,13 +124,18 @@ def main() -> int:
         print("  symlinked %s -> %s" % (link, target))
 
     print("LRS3 splits:")
-    slice_split(src / "en", dst / "en", "train", args.rows, data_root)
-    slice_split(src / "en", dst / "en", "valid", args.val_rows, data_root)
-    slice_split(src / "en", dst / "en", "test", args.val_rows, data_root)
+    for split, rows in (("train", args.rows), ("valid", args.val_rows), ("test", args.val_rows)):
+        tsv_path = src / "en" / (split + ".tsv")
+        if not slice_split(src / "en", dst / "en", split, rows, data_root):
+            raise SystemExit("missing or empty source split: %s" % tsv_path)
 
     print("merged train:")
     (dst / "en_vc2").mkdir(parents=True, exist_ok=True)
-    slice_split(src / "en_vc2", dst / "en_vc2", "train", args.rows, data_root)
+    tsv_path = src / "en_vc2" / "train.tsv"
+    if not slice_split(
+        src / "en_vc2", dst / "en_vc2", "train", args.rows, data_root, balanced=True
+    ):
+        raise SystemExit("missing or empty source split: %s" % tsv_path)
 
     print("fixture ready at %s" % args.dest_root)
     return 0
