@@ -15,6 +15,7 @@ from pytorch_lightning import Trainer, seed_everything
 from tqdm import tqdm
 from spec_augment import spec_augment
 from utils import (
+    to_float_mono,
     add_noise,
     load_data,
     WhisperDataCollatorWhithPadding,
@@ -77,7 +78,7 @@ class MuavicSpeechDecodeDataset(torch.utils.data.Dataset):
             raise ValueError(f"Expected {self.sample_rate} Hz, got {sample_rate}: {audio_path}")
         if np.random.rand() <= self.noise_prob:
             wav_data = add_noise(wav_data, self.noise_fn, noise_snr=args.noise_snr)
-        audio = wav_data.flatten().astype(np.float32) / 32768.0
+        audio = to_float_mono(wav_data).flatten()
         if self.max_length is not None:
             audio = whisper.pad_or_trim(audio, length=self.max_length)
         n_mels = 80 if self.model_name != "large-v3" else 128
